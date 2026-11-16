@@ -228,7 +228,19 @@
   .stat.warn .n{ color:var(--warn); }
   .stat.err .n{ color:var(--danger); }
 
-  .legend{ display:flex; flex-wrap:wrap; gap:6px 14px; padding:12px 18px 2px; }
+  .legend{ display:flex; flex-wrap:wrap; gap:6px 14px; padding:12px 18px 2px; max-height:var(--legend-h, 96px); overflow-y:auto; flex-shrink:0; align-content:flex-start; }
+  /* drag bar between the legend and the Issues/Files tabs */
+  .legend-resizer{ display:none; flex-shrink:0; height:14px; cursor:row-resize; touch-action:none; position:relative; margin:2px 0 0; }
+  #legend[style*="display: flex"] + .legend-resizer{ display:block; }
+  .legend-resizer::before{
+    content:''; position:absolute; left:50%; top:5px; width:44px; height:4px; margin-left:-22px;
+    border-radius:999px; background:var(--border-strong); transition:background .15s ease, width .15s ease, margin-left .15s ease;
+  }
+  .legend-resizer:hover::before, .legend-resizer.dragging::before, .legend-resizer:focus-visible::before{
+    background:var(--accent); width:60px; margin-left:-30px;
+  }
+  .legend-resizer:focus-visible{ outline:none; }
+  body.resizing-legend{ cursor:row-resize; user-select:none; }
   .legend-item{ display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); font-family:var(--font-mono); }
   .legend-swatch{ width:9px; height:9px; border-radius:50%; flex-shrink:0; box-shadow:0 0 6px currentColor; }
   .legend-item[data-type]{ cursor:pointer; user-select:none; padding:2px 8px; border:1px solid transparent; border-radius:999px; transition:all .15s ease; }
@@ -531,6 +543,7 @@
     <div id="bundleName" class="bundle-name" style="display:none;"></div>
     <div id="summaryRow" class="summary-row" style="display:none;"></div>
     <div id="legend" class="legend" style="display:none;"></div>
+    <div class="legend-resizer" id="legendResizer" role="separator" aria-orientation="horizontal" aria-label="Drag to resize the type list" tabindex="0" title="Drag to resize"></div>
     <div class="rail-tabs" role="tablist" aria-label="Bundle panels">
       <button type="button" class="rail-tab active" role="tab" aria-selected="true" data-tab="issues">Issues <span id="issuesCount"></span></button>
       <button type="button" class="rail-tab" role="tab" aria-selected="false" data-tab="files">Files <span id="filesCount"></span></button>
@@ -2143,6 +2156,49 @@
   }
   toggle.addEventListener('click', () => setDrawer(rail.classList.contains('collapsed')));
   if(window.matchMedia('(max-width: 720px)').matches) setDrawer(false);
+
+  // drag bar: resize the type legend so the Issues / Files lists get more room
+  (function(){
+    const legend = document.getElementById('legend');
+    const bar = document.getElementById('legendResizer');
+    const MIN_H = 40;
+    let h = 96;
+    try{ const v = parseInt(localStorage.getItem('okflens-legend-h'), 10); if(v >= MIN_H) h = v; }catch(e){}
+    function maxH(){ return Math.max(MIN_H + 20, Math.round(rail.clientHeight * 0.6)); }
+    function setH(v, save){
+      h = Math.max(MIN_H, Math.min(maxH(), Math.round(v)));
+      rail.style.setProperty('--legend-h', h + 'px');
+      if(save){ try{ localStorage.setItem('okflens-legend-h', String(h)); }catch(e){} }
+    }
+    setH(h, false);
+    let startY = 0, startH = 0;
+    bar.addEventListener('pointerdown', e => {
+      startY = e.clientY;
+      startH = legend.getBoundingClientRect().height - 14;   // current box height (minus top padding+border slack)
+      startH = Math.min(h, Math.max(MIN_H, legend.offsetHeight));
+      bar.setPointerCapture(e.pointerId);
+      bar.classList.add('dragging');
+      document.body.classList.add('resizing-legend');
+      e.preventDefault();
+    });
+    bar.addEventListener('pointermove', e => {
+      if(!bar.hasPointerCapture(e.pointerId)) return;
+      setH(startH + (e.clientY - startY), false);
+    });
+    const end = e => {
+      if(!bar.classList.contains('dragging')) return;
+      bar.classList.remove('dragging');
+      document.body.classList.remove('resizing-legend');
+      setH(h, true);
+    };
+    bar.addEventListener('pointerup', end);
+    bar.addEventListener('pointercancel', end);
+    bar.addEventListener('dblclick', () => setH(96, true));   // double-click resets to the default height
+    bar.addEventListener('keydown', e => {
+      if(e.key === 'ArrowUp'){ e.preventDefault(); setH(h - 24, true); }
+      else if(e.key === 'ArrowDown'){ e.preventDefault(); setH(h + 24, true); }
+    });
+  })();
 
   // typing in the toolbar search reveals the Files tab, where results are shown
   search.addEventListener('input', () => {
