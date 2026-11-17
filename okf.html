@@ -9,6 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
 <style>
   :root{
     /* ---- Design tokens ---- */
@@ -763,32 +764,19 @@
   // ---------- Parsing ----------
   function parseFrontmatter(text){
     const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-    if(!m) return { frontmatter: null, body: text, raw: '' };
+    if(!m) return { frontmatter: null, body: text, raw: '', parseError: null };
     const raw = m[1];
     const body = m[2] || '';
-    const fm = {};
-    const lines = raw.split(/\r?\n/);
-    let currentKey = null;
-    for(const line of lines){
-      const listMatch = line.match(/^\s*-\s*(.+)$/);
-      if(listMatch && currentKey){
-        if(!Array.isArray(fm[currentKey])) fm[currentKey] = [];
-        fm[currentKey].push(listMatch[1].trim().replace(/^["']|["']$/g,''));
-        continue;
+    try{
+      const fm = jsyaml.load(raw, { schema: jsyaml.JSON_SCHEMA });
+      if(fm === undefined || fm === null) return { frontmatter: {}, body, raw, parseError: null };
+      if(typeof fm !== 'object' || Array.isArray(fm)){
+        return { frontmatter: {}, body, raw, parseError: 'YAML frontmatter must be a mapping.' };
       }
-      const kv = line.match(/^([A-Za-z0-9_\-]+):\s*(.*)$/);
-      if(kv){
-        currentKey = kv[1];
-        let val = kv[2].trim();
-        if(val === ''){ fm[currentKey] = null; continue; }
-        if(val.startsWith('[') && val.endsWith(']')){
-          fm[currentKey] = val.slice(1,-1).split(',').map(s => s.trim().replace(/^["']|["']$/g,'')).filter(Boolean);
-        } else {
-          fm[currentKey] = val.replace(/^["']|["']$/g,'');
-        }
-      }
+      return { frontmatter: fm, body, raw, parseError: null };
+    } catch(e){
+      return { frontmatter: {}, body, raw, parseError: e.message || 'Invalid YAML frontmatter.' };
     }
-    return { frontmatter: fm, body, raw };
   }
 
   function extractLinks(body){
@@ -915,6 +903,11 @@
     const issues = [];
     const fm = c.frontmatter;
     if(c.isLog) return issues; // reserved plain-text file, no schema applies
+    if(c.frontmatterParseError){
+      issues.push(mkIssue('error', c.path, 'YAML frontmatter fails to parse: ' + c.frontmatterParseError, 'invalid-frontmatter-yaml',
+        [{ text:'Fix the YAML syntax in the frontmatter block.', fixable:false }]));
+      return issues;
+    }
     if(c.isIndex && c.path.includes('/')) {
       if(c.hasFrontmatter && Object.keys(fm).length){
         issues.push(mkIssue('warning', c.path, 'Non-root index.md carries frontmatter — only the bundle root index.md should.', 'index-frontmatter',
@@ -1121,14 +1114,14 @@
       const base = f.path.split('/').pop();
       const isIndex = base === 'index.md';
       const isLog = base === 'log.md';
-      const { frontmatter, body } = parseFrontmatter(f.text);
+      const { frontmatter, body, parseError } = parseFrontmatter(f.text);
       const rawLinks = extractLinks(body);
       const links = rawLinks.map(l => ({ ...l, resolved: resolveRelative(f.path, l.target) }));
 
       concepts.push({
         path: f.path, base, isIndex, isLog, frontmatter: frontmatter || {}, body,
         type: (frontmatter && frontmatter.type) || (isIndex ? 'index' : isLog ? 'log' : 'untyped'),
-        links, hasFrontmatter: frontmatter !== null,
+        links, hasFrontmatter: frontmatter !== null, frontmatterParseError: parseError,
         headerSlugs: extractHeaderSlugs(body)
       });
     }
